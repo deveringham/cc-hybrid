@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# cc-cloud — run Claude Code normally, against Anthropic, using your existing
+# Pro/Max subscription login. This is the "hard task" half of the hybrid.
+#
+# It exists mainly to scrub any proxy environment variables that might be
+# lingering in your shell from a cc-local session, which would otherwise
+# silently route you back to the local model.
+set -euo pipefail
+
+unset ANTHROPIC_BASE_URL
+unset ANTHROPIC_AUTH_TOKEN
+unset ANTHROPIC_DEFAULT_OPUS_MODEL
+unset ANTHROPIC_DEFAULT_SONNET_MODEL
+unset ANTHROPIC_DEFAULT_HAIKU_MODEL
+unset DISABLE_NON_ESSENTIAL_MODEL_CALLS
+unset CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+
+printf '\033[1;36mcc-cloud:\033[0m using Anthropic (subscription)\n' >&2
+exec claude "$@"

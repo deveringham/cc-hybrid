@@ -1,0 +1,72 @@
+# LiteLLM router config — installed to ~/.config/cc-hybrid/litellm-config.yaml
+#
+# Claude Code  ->  LiteLLM (:4000, Anthropic /v1/messages)  ->  local llama.cpp
+#                                                           \->  Anthropic (optional)
+#
+# Start with:  litellm --config ~/.config/cc-hybrid/litellm-config.yaml --port 4000
+
+model_list:
+  # --- the local model, reached through the SSH tunnel -----------------------
+  - model_name: local-coder
+    litellm_params:
+      # "openai/" tells LiteLLM to speak the OpenAI chat-completions dialect to
+      # llama.cpp. LiteLLM translates Claude Code's Anthropic-format request
+      # into that and translates the response back.
+      model: openai/local-coder          # must match ALIAS in llama-server.env
+      api_base: http://127.0.0.1:8080/v1 # the LOCAL end of the SSH tunnel
+      api_key: "not-needed"              # llama.cpp ignores this
+      timeout: 600                       # Turing + long prompts is slow; be patient
+      stream_timeout: 600
+    model_info:
+      max_input_tokens: 65536            # keep in sync with CTX_SIZE on the node
+      max_output_tokens: 8192
+      supports_function_calling: true
+
+  # --- catch-all so any model id Claude Code invents still resolves ----------
+  # Claude Code sometimes requests a haiku-class model for small background
+  # tasks. Without this, those requests 404 and surface as confusing errors.
+  - model_name: "*"
+    litellm_params:
+      model: openai/local-coder
+      api_base: http://127.0.0.1:8080/v1
+      api_key: "not-needed"
+      timeout: 600
+      stream_timeout: 600
+
+  # --- OPTIONAL cloud fallback ----------------------------------------------
+  # Requires a pay-as-you-go Anthropic API key (ANTHROPIC_API_KEY in
+  # litellm.env). This is BILLED SEPARATELY from a Pro/Max subscription.
+  # If you don't have one, leave this block commented out and use the
+  # `cc-cloud` wrapper instead, which uses your subscription directly.
+  #
+  # - model_name: cloud-sonnet
+  #   litellm_params:
+  #     model: anthropic/claude-sonnet-4-5
+  #     api_key: os.environ/ANTHROPIC_API_KEY
+  #     timeout: 600
+
+litellm_settings:
+  # Claude Code sends parameters llama.cpp doesn't understand. Without this the
+  # proxy 400s instead of quietly dropping them.
+  drop_params: true
+  # Don't log full prompts/completions to disk by default.
+  turn_off_message_logging: true
+  request_timeout: 600
+
+router_settings:
+  # Retry once locally before giving up (or falling back).
+  num_retries: 1
+  timeout: 600
+  allowed_fails: 3
+  cooldown_time: 60
+
+  # Uncomment together with the cloud-sonnet block above to get automatic
+  # failover when the node is down or the tunnel is broken.
+  # fallbacks:
+  #   - local-coder: ["cloud-sonnet"]
+  #   - "*": ["cloud-sonnet"]
+
+general_settings:
+  # Shared secret between Claude Code and the proxy. Overridden by
+  # LITELLM_MASTER_KEY in litellm.env — change it there, not here.
+  master_key: os.environ/LITELLM_MASTER_KEY

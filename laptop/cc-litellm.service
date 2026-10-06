@@ -1,0 +1,19 @@
+[Unit]
+Description=LiteLLM router for Claude Code (local model + optional cloud fallback)
+After=network-online.target cc-tunnel.service
+Wants=network-online.target cc-tunnel.service
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/cc-hybrid/litellm.env
+ExecStart=%h/.local/share/cc-hybrid/venv/bin/litellm \
+  --config %h/.config/cc-hybrid/litellm-config.yaml \
+  --host 127.0.0.1 \
+  --port 4000
+
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target

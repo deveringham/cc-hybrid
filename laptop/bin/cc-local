@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# cc-local — run Claude Code against the self-hosted model on the Quadro node.
+#
+# Usage:  cc-local [any normal claude arguments]
+#
+# Checks the tunnel and proxy are alive first, because the failure mode
+# otherwise is a long hang followed by an opaque error mid-session.
+set -euo pipefail
+
+PROXY="http://127.0.0.1:4000"
+ENV_FILE="$HOME/.config/cc-hybrid/litellm.env"
+
+die() { printf '\033[1;31mcc-local:\033[0m %s\n' "$*" >&2; exit 1; }
+note() { printf '\033[1;33mcc-local:\033[0m %s\n' "$*" >&2; }
+
+[ -f "$ENV_FILE" ] || die "missing $ENV_FILE — run setup-laptop.sh first."
+# shellcheck disable=SC1090
+set -a; . "$ENV_FILE"; set +a
+[ -n "${LITELLM_MASTER_KEY:-}" ] || die "LITELLM_MASTER_KEY not set in $ENV_FILE"
+case "$LITELLM_MASTER_KEY" in
+  *CHANGE-ME*) die "LITELLM_MASTER_KEY is still the placeholder. Edit $ENV_FILE." ;;
+esac
+
+# --- is the proxy up? --------------------------------------------------------
+if ! curl -sf --max-time 5 "$PROXY/health/liveliness" >/dev/null 2>&1; then
+  note "LiteLLM not responding on :4000 — trying to start it"
+  systemctl --user start cc-litellm 2>/dev/null || true
+  for _ in $(seq 20); do
+    curl -sf --max-time 2 "$PROXY/health/liveliness" >/dev/null 2>&1 && break
+    sleep 1
+  done
+  curl -sf --max-time 2 "$PROXY/health/liveliness" >/dev/null 2>&1 \
+    || die "LiteLLM still down. Check: journalctl --user -u cc-litellm -n 50"
+fi
+
+# --- is the tunnel up and the model loaded? ---------------------------------
+if ! curl -sf --max-time 5 http://127.0.0.1:8080/health >/dev/null 2>&1; then
+  note "cannot reach llama-server through the tunnel on :8080"
+  systemctl --user start cc-tunnel 2>/dev/null || true
+  sleep 3
+  if ! curl -sf --max-time 5 http://127.0.0.1:8080/health >/dev/null 2>&1; then
+    note "still unreachable. The node may be off, or the model is still loading."
+    note "Check:  systemctl --user status cc-tunnel"
+    note "        ssh \$SSH_TARGET 'systemctl --user status llama-server'"
+    note "Falling back to the cloud is:  cc-cloud"
+    exit 1
+  fi
+fi
+
+# --- point Claude Code at the proxy -----------------------------------------
+# NOTE: no trailing /v1 — the client appends /v1/messages itself.
+export ANTHROPIC_BASE_URL="$PROXY"
+export ANTHROPIC_AUTH_TOKEN="$LITELLM_MASTER_KEY"
+# Unset so Claude Code does not prefer a real Anthropic key over the proxy token.
+unset ANTHROPIC_API_KEY
+
+# Map every tier onto the one local model. Setting these (rather than passing a
+# custom id in --model) avoids Claude Code's model-name validation.
+export ANTHROPIC_DEFAULT_OPUS_MODEL="local-coder"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="local-coder"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="local-coder"
+
+# Keep the context Claude Code requests inside what the node actually serves.
+export CLAUDE_CODE_MAX_OUTPUT_TOKENS="${CLAUDE_CODE_MAX_OUTPUT_TOKENS:-8192}"
+# Local models are weak at the "is this worth compacting" judgement; disabling
+# the extra round-trips keeps sessions snappier.
+export DISABLE_NON_ESSENTIAL_MODEL_CALLS=1
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+
+printf '\033[1;32mcc-local:\033[0m using self-hosted model via %s\n' "$PROXY" >&2
+exec claude "$@"

@@ -1,0 +1,19 @@
+# Real config files hold secrets (LiteLLM master key, SSH target, API keys).
+# Only the .example templates belong in the repo.
+*.env
+!*.env.example
+*.env.bak
+*.yaml.bak
+
+# Never commit model weights.
+*.gguf
+*.safetensors
+models/
+
+# Build output, in case llama.cpp is ever checked out inside this tree.
+build/
+llama.cpp/
+
+# Local scratch
+*.log
+.DS_Store
